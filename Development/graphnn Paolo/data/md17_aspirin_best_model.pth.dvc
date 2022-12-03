@@ -1,0 +1,4 @@
+outs:
+- md5: 7ac6ded909406e4326ea8a7d4b2094c8
+  path: md17_aspirin_best_model.pth
+  size: 6881065
