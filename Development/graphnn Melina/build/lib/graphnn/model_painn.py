@@ -57,7 +57,7 @@ class PainnModel(nn.Module):
         self.readout_mlp = nn.Sequential(
             nn.Linear(hidden_state_size, hidden_state_size),
             nn.SiLU(),
-            nn.Linear(hidden_state_size, 1)
+            nn.Linear(hidden_state_size, 1),
         )
 
         # Normalisation constants

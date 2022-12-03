@@ -1,0 +1,5 @@
+[core]
+    remote = niflheim
+[remote "niflheim"]
+    url = ssh://slid.fysik.dtu.dk/home/energy/projects/sure/dvc/graphnn/
+    ask_password = true

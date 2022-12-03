@@ -11,7 +11,7 @@ import torch
 
 from context import graphnn
 from graphnn import data
-from graphnn import model
+from graphnn import model_forces, model_painn
 
 
 def get_arguments(arg_list=None):
@@ -43,6 +43,11 @@ def get_arguments(arg_list=None):
         help="Number of interaction layers used",
     )
     parser.add_argument(
+        "--use_painn_model",
+        action="store_true",
+        help="Use PaiNN model rather than Schnet (w edge)",
+    )
+    parser.add_argument(
         "--node_size", type=int, default=64, help="Size of hidden node states"
     )
     parser.add_argument(
@@ -52,7 +57,10 @@ def get_arguments(arg_list=None):
         help="Path to output directory",
     )
     parser.add_argument(
-        "--dataset", type=str, default="data/qm9.db", help="Path to ASE database",
+        "--dataset",
+        type=str,
+        default="data/qm9.db",
+        help="Path to ASE database",
     )
     parser.add_argument(
         "--max_steps",
@@ -67,18 +75,54 @@ def get_arguments(arg_list=None):
         help="Set which device to use for training e.g. 'cuda' or 'cpu'",
     )
     parser.add_argument(
-        "--update_edges", action="store_true", help="Enable edge updates in model",
+        "--update_edges",
+        action="store_true",
+        help="Enable edge updates in model",
     )
     parser.add_argument(
         "--atomwise_normalization",
         action="store_true",
         help="Enable normalization on atom-level rather than on global graph output",
     )
+
     parser.add_argument(
-        "--target", type=str, default="energy", help="Name of target property",
+        "--batch_size",
+        type=int,
+        default=32,
+        help="Number of molecules per minibatch",
+    )
+
+    parser.add_argument(
+        "--initial_lr",
+        type=float,
+        default=0.0001,
+        help="Initial learning rate",
+    )
+
+    parser.add_argument(
+        "--forces_property",
+        type=str,
+        default="forces",
+        help="Name of forces property in ASE database",
     )
     parser.add_argument(
-        "--learning_rate", type=float, default=0.0001, help="Learning rate",
+        "--energy_property",
+        type=str,
+        default="energy",
+        help="Name of energy property in ASE database",
+    )
+
+    parser.add_argument(
+        "--forces_weight",
+        type=float,
+        default=0.5,
+        help="Tradeoff between training on forces (weight=1) and energy (weight=0)",
+    )
+
+    parser.add_argument(
+        "--direct_force_output",
+        action="store_true",
+        help="Calculate forces directly with neural network instead of taking the gradient",
     )
 
     return parser.parse_args(arg_list)
@@ -109,26 +153,78 @@ def split_data(dataset, args):
     return datasplits
 
 
-def eval_model(model, dataloader, device):
-    running_ae = 0
-    running_se = 0
-    running_count = 0
+def eval_model(model, dataloader, device, forces_weight):
+    energy_running_ae = 0
+    energy_running_se = 0
+    energy_running_count = 0
+
+    forces_running_l2_ae = 0
+    forces_running_l2_se = 0
+    forces_running_c_ae = 0
+    forces_running_c_se = 0
+    forces_running_count = 0
+    forces_running_loss = 0
+
+    running_loss = 0
+    running_loss_count = 0
+    criterion = torch.nn.MSELoss()
+
     for batch in dataloader:
         device_batch = {
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
-        with torch.no_grad():
-            outputs = model(device_batch).detach().cpu().numpy()
-        targets = batch["targets"].detach().cpu().numpy()
+        out = model(device_batch)
 
-        running_ae += np.sum(np.abs(targets - outputs), axis=0)
-        running_se += np.sum(np.square(targets - outputs), axis=0)
-        running_count += targets.shape[0]
+        forces_loss = forces_criterion(
+            out["forces"], device_batch["forces"], device_batch["num_nodes"]
+        ).item()
+        energy_loss = criterion(out["energy"], device_batch["energy"])
+        total_loss = forces_weight * forces_loss + (1 - forces_weight) * energy_loss
+        running_loss += total_loss.item() * batch["energy"].shape[0]
+        running_loss_count += batch["energy"].shape[0]
 
-    mae = running_ae / running_count
-    rmse = np.sqrt(running_se / running_count)
+        outputs = {key: val.detach().cpu().numpy() for key, val in out.items()}
 
-    return mae, rmse
+        energy_targets = batch["energy"].detach().cpu().numpy()
+        energy_running_ae += np.sum(np.abs(energy_targets - outputs["energy"]), axis=0)
+        energy_running_se += np.sum(
+            np.square(energy_targets - outputs["energy"]), axis=0
+        )
+        energy_running_count += energy_targets.shape[0]
+
+        forces_targets = batch["forces"].detach().cpu().numpy()
+        forces_diff = forces_targets - outputs["forces"]
+        forces_l2_norm = np.sqrt(np.sum(np.square(forces_diff), axis=2))
+
+        forces_running_c_ae += np.sum(np.abs(forces_diff))
+        forces_running_c_se += np.sum(np.square(forces_diff))
+
+        forces_running_l2_ae += np.sum(np.abs(forces_l2_norm))
+        forces_running_l2_se += np.sum(np.square(forces_l2_norm))
+        forces_running_count += np.sum(batch["num_nodes"].detach().cpu().numpy())
+
+    energy_mae = energy_running_ae / energy_running_count
+    energy_rmse = np.sqrt(energy_running_se / energy_running_count)
+
+    forces_l2_mae = forces_running_l2_ae / forces_running_count
+    forces_l2_rmse = np.sqrt(forces_running_l2_se / forces_running_count)
+
+    forces_c_mae = forces_running_c_ae / (forces_running_count * 3)
+    forces_c_rmse = forces_running_c_se / (forces_running_count * 3)
+
+    total_loss = running_loss / running_loss_count
+
+    evaluation = {
+        "energy_mae": energy_mae,
+        "energy_rmse": energy_rmse,
+        "forces_l2_mae": forces_l2_mae,
+        "forces_l2_rmse": forces_l2_rmse,
+        "forces_mae": forces_c_mae,
+        "forces_rmse": forces_c_rmse,
+        "sqrt(total_loss)": np.sqrt(total_loss),
+    }
+
+    return evaluation
 
 
 def get_normalization(dataset, per_atom=True):
@@ -145,10 +241,10 @@ def get_normalization(dataset, per_atom=True):
             # Estimate "bias" from 1 sample
             # to avoid overflows for large valued datasets
             if per_atom:
-                bias = sample["targets"] / sample["num_nodes"]
+                bias = sample["energy"] / sample["num_nodes"]
             else:
-                bias = sample["targets"]
-        x = sample["targets"]
+                bias = sample["energy"]
+        x = sample["energy"]
         if per_atom:
             x = x / sample["num_nodes"]
         x -= bias
@@ -166,15 +262,43 @@ def get_normalization(dataset, per_atom=True):
 
 
 def get_model(args, **kwargs):
-    net = model.SchnetModel(
-        num_interactions=args.num_interactions,
-        hidden_state_size=args.node_size,
-        cutoff=args.cutoff,
-        update_edges=args.update_edges,
-        normalize_atomwise=args.atomwise_normalization,
-        **kwargs
-    )
+    if args.use_painn_model:
+        if args.update_edges:
+            raise Warning("update_edges argument ignored for PaiNN model")
+        net = model_painn.PainnModel(
+            args.num_interactions,
+            args.node_size,
+            args.cutoff,
+            normalize_atomwise=args.atomwise_normalization,
+            direct_force_output=args.direct_force_output,
+            **kwargs
+        )
+    else:
+        net = model_forces.SchnetModelForces(
+            args.num_interactions,
+            args.node_size,
+            args.cutoff,
+            update_edges=args.update_edges,
+            normalize_atomwise=args.atomwise_normalization,
+            **kwargs
+        )
     return net
+
+
+def forces_criterion(predicted, target, node_count, reduction="mean"):
+    # predicted, target are (bs, max_nodes, 3) tensors
+    # node_count is (bs) tensor
+    diff = predicted - target
+    total_squared_norm = torch.sum(torch.sum(torch.square(diff), axis=2), axis=1)  # bs
+    assert len(node_count.shape) == 1
+    avg_squared_norm = total_squared_norm / node_count
+    if reduction == "mean":
+        scalar = torch.mean(avg_squared_norm)
+    elif reduction == "sum":
+        scalar = torch.sum(avg_squared_norm)
+    else:
+        raise ValueError("Reduction must be 'mean' or 'sum'")
+    return scalar
 
 
 def main():
@@ -209,7 +333,12 @@ def main():
     # Setup dataset and loader
     logging.info("loading data %s", args.dataset)
     dataset = data.AseDbData(
-        args.dataset, data.TransformRowToGraph(cutoff=args.cutoff, targets=args.target)
+        args.dataset,
+        data.TransformRowToGraphXyz(
+            cutoff=args.cutoff,
+            energy_property=args.energy_property,
+            forces_property=args.forces_property,
+        ),
     )
     dataset = data.BufferData(dataset)  # Load data into host memory
 
@@ -224,13 +353,13 @@ def main():
     # Setup loaders
     train_loader = torch.utils.data.DataLoader(
         datasplits["train"],
-        100,
+        args.batch_size,
         sampler=torch.utils.data.RandomSampler(datasplits["train"]),
         collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
     )
     val_loader = torch.utils.data.DataLoader(
         datasplits["validation"],
-        32,
+        args.batch_size,
         collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
     )
 
@@ -239,22 +368,22 @@ def main():
     net = net.to(device)
 
     # Setup optimizer
-    optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.Adam(net.parameters(), lr=args.initial_lr)
     criterion = torch.nn.MSELoss()
     scheduler_fn = lambda step: 0.96 ** (step / 100000)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
 
-    log_interval = 10000
+    log_interval = 5000
     running_loss = 0
     running_loss_count = 0
-    best_val_mae = np.inf
+    best_val_loss = np.inf
     step = 0
-    # Restore checkpoint - Load model from previous run
+    # Restore checkpoint
     if args.load_model:
         state_dict = torch.load(args.load_model)
         net.load_state_dict(state_dict["model"])
         step = state_dict["step"]
-        best_val_mae = state_dict["best_val_mae"]
+        best_val_loss = state_dict["best_val_loss"]
         optimizer.load_state_dict(state_dict["optimizer"])
         scheduler.load_state_dict(state_dict["scheduler"])
 
@@ -271,14 +400,25 @@ def main():
             optimizer.zero_grad()
 
             # Forward, backward and optimize
-            outputs = net(batch)
-            loss = criterion(outputs, batch["targets"])
-            loss.backward()
+            outputs = net(
+                batch, compute_stress=False, compute_forces=bool(args.forces_weight)
+            )
+            energy_loss = criterion(outputs["energy"], batch["energy"])
+            if args.forces_weight:
+                forces_loss = forces_criterion(
+                    outputs["forces"], batch["forces"], batch["num_nodes"]
+                )
+            else:
+                forces_loss = 0.0
+            total_loss = (
+                args.forces_weight * forces_loss
+                + (1 - args.forces_weight) * energy_loss
+            )
+            total_loss.backward()
             optimizer.step()
 
-            loss_value = loss.item()
-            running_loss += loss_value * batch["targets"].shape[0]
-            running_loss_count += batch["targets"].shape[0]
+            running_loss += total_loss.item() * batch["energy"].shape[0]
+            running_loss_count += batch["energy"].shape[0]
 
             # print(step, loss_value)
             # Validate and save model
@@ -286,26 +426,28 @@ def main():
                 train_loss = running_loss / running_loss_count
                 running_loss = running_loss_count = 0
 
-                val_mae, val_rmse = eval_model(net, val_loader, device)
+                eval_dict = eval_model(net, val_loader, device, args.forces_weight)
+                eval_formatted = ", ".join(
+                    ["%s=%g" % (k, v) for (k, v) in eval_dict.items()]
+                )
 
                 logging.info(
-                    "step=%d, val_mae=%g, val_rmse=%g, sqrt(train_loss)=%g",
+                    "step=%d, %s, sqrt(train_loss)=%g",
                     step,
-                    val_mae,
-                    val_rmse,
+                    eval_formatted,
                     math.sqrt(train_loss),
                 )
 
                 # Save checkpoint
-                if val_mae < best_val_mae:
-                    best_val_mae = val_mae
+                if eval_dict["sqrt(total_loss)"] < best_val_loss:
+                    best_val_loss = eval_dict["sqrt(total_loss)"]
                     torch.save(
                         {
                             "model": net.state_dict(),
                             "optimizer": optimizer.state_dict(),
                             "scheduler": scheduler.state_dict(),
                             "step": step,
-                            "best_val_mae": best_val_mae,
+                            "best_val_loss": best_val_loss,
                         },
                         os.path.join(args.output_dir, "best_model.pth"),
                     )
@@ -315,6 +457,16 @@ def main():
 
             if step >= args.max_steps:
                 logging.info("Max steps reached, exiting")
+                torch.save(
+                    {
+                        "model": net.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict(),
+                        "step": step,
+                        "best_val_loss": best_val_loss,
+                    },
+                    os.path.join(args.output_dir, "exit_model.pth"),
+                )
                 sys.exit(0)
 
 

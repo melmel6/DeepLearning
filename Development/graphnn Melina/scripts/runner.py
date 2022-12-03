@@ -208,114 +208,120 @@ def main():
 
     # Setup dataset and loader
     logging.info("loading data %s", args.dataset)
+
+
     dataset = data.AseDbData(
         args.dataset, data.TransformRowToGraph(cutoff=args.cutoff, targets=args.target)
     )
+
     dataset = data.BufferData(dataset)  # Load data into host memory
+    # logging.info(dataset.data_objects)
 
-    # Split data into train and validation sets
-    datasplits = split_data(dataset, args)
-    logging.info("Computing mean and variance")
-    target_mean, target_stddev = get_normalization(
-        datasplits["train"], per_atom=args.atomwise_normalization
-    )
-    logging.debug("target_mean=%f, target_stddev=%f" % (target_mean, target_stddev))
 
-    # Setup loaders
-    train_loader = torch.utils.data.DataLoader(
-        datasplits["train"],
-        100,
-        sampler=torch.utils.data.RandomSampler(datasplits["train"]),
-        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
-    )
-    val_loader = torch.utils.data.DataLoader(
-        datasplits["validation"],
-        32,
-        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
-    )
 
-    # Initialise model
-    net = get_model(args, target_mean=target_mean, target_stddev=target_stddev)
-    net = net.to(device)
+    # # Split data into train and validation sets
+    # datasplits = split_data(dataset, args)
+    # logging.info("Computing mean and variance")
+    # target_mean, target_stddev = get_normalization(
+    #     datasplits["train"], per_atom=args.atomwise_normalization
+    # )
+    # logging.debug("target_mean=%f, target_stddev=%f" % (target_mean, target_stddev))
 
-    # Setup optimizer
-    optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
-    criterion = torch.nn.MSELoss()
-    scheduler_fn = lambda step: 0.96 ** (step / 100000)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
+    # # Setup loaders
+    # train_loader = torch.utils.data.DataLoader(
+    #     datasplits["train"],
+    #     100,
+    #     sampler=torch.utils.data.RandomSampler(datasplits["train"]),
+    #     collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
+    # )
+    # val_loader = torch.utils.data.DataLoader(
+    #     datasplits["validation"],
+    #     32,
+    #     collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
+    # )
 
-    log_interval = 10000
-    running_loss = 0
-    running_loss_count = 0
-    best_val_mae = np.inf
-    step = 0
-    # Restore checkpoint - Load model from previous run
-    if args.load_model:
-        state_dict = torch.load(args.load_model)
-        net.load_state_dict(state_dict["model"])
-        step = state_dict["step"]
-        best_val_mae = state_dict["best_val_mae"]
-        optimizer.load_state_dict(state_dict["optimizer"])
-        scheduler.load_state_dict(state_dict["scheduler"])
+    # # Initialise model
+    # net = get_model(args, target_mean=target_mean, target_stddev=target_stddev)
+    # net = net.to(device)
 
-    logging.info("start training")
-    for epoch in itertools.count():
-        for batch_host in train_loader:
-            # Transfer to 'device'
-            batch = {
-                k: v.to(device=device, non_blocking=True)
-                for (k, v) in batch_host.items()
-            }
+    # # Setup optimizer
+    # optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    # criterion = torch.nn.MSELoss()
+    # scheduler_fn = lambda step: 0.96 ** (step / 100000)
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
 
-            # Reset gradient
-            optimizer.zero_grad()
+    # log_interval = 10000
+    # running_loss = 0
+    # running_loss_count = 0
+    # best_val_mae = np.inf
+    # step = 0
+    # # Restore checkpoint - Load model from previous run
+    # if args.load_model:
+    #     state_dict = torch.load(args.load_model)
+    #     net.load_state_dict(state_dict["model"])
+    #     step = state_dict["step"]
+    #     best_val_mae = state_dict["best_val_mae"]
+    #     optimizer.load_state_dict(state_dict["optimizer"])
+    #     scheduler.load_state_dict(state_dict["scheduler"])
 
-            # Forward, backward and optimize
-            outputs = net(batch)
-            loss = criterion(outputs, batch["targets"])
-            loss.backward()
-            optimizer.step()
+    # logging.info("start training")
+    # for epoch in itertools.count():
+    #     for batch_host in train_loader:
+    #         # Transfer to 'device'
+    #         batch = {
+    #             k: v.to(device=device, non_blocking=True)
+    #             for (k, v) in batch_host.items()
+    #         }
 
-            loss_value = loss.item()
-            running_loss += loss_value * batch["targets"].shape[0]
-            running_loss_count += batch["targets"].shape[0]
+    #         # Reset gradient
+    #         optimizer.zero_grad()
 
-            # print(step, loss_value)
-            # Validate and save model
-            if (step % log_interval == 0) or ((step + 1) == args.max_steps):
-                train_loss = running_loss / running_loss_count
-                running_loss = running_loss_count = 0
+    #         # Forward, backward and optimize
+    #         outputs = net(batch)
+    #         loss = criterion(outputs, batch["targets"])
+    #         loss.backward()
+    #         optimizer.step()
 
-                val_mae, val_rmse = eval_model(net, val_loader, device)
+    #         loss_value = loss.item()
+    #         running_loss += loss_value * batch["targets"].shape[0]
+    #         running_loss_count += batch["targets"].shape[0]
 
-                logging.info(
-                    "step=%d, val_mae=%g, val_rmse=%g, sqrt(train_loss)=%g",
-                    step,
-                    val_mae,
-                    val_rmse,
-                    math.sqrt(train_loss),
-                )
+    #         # print(step, loss_value)
+    #         # Validate and save model
+    #         if (step % log_interval == 0) or ((step + 1) == args.max_steps):
+    #             train_loss = running_loss / running_loss_count
+    #             running_loss = running_loss_count = 0
 
-                # Save checkpoint
-                if val_mae < best_val_mae:
-                    best_val_mae = val_mae
-                    torch.save(
-                        {
-                            "model": net.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "scheduler": scheduler.state_dict(),
-                            "step": step,
-                            "best_val_mae": best_val_mae,
-                        },
-                        os.path.join(args.output_dir, "best_model.pth"),
-                    )
-            step += 1
+    #             val_mae, val_rmse = eval_model(net, val_loader, device)
 
-            scheduler.step()
+    #             logging.info(
+    #                 "step=%d, val_mae=%g, val_rmse=%g, sqrt(train_loss)=%g",
+    #                 step,
+    #                 val_mae,
+    #                 val_rmse,
+    #                 math.sqrt(train_loss),
+    #             )
 
-            if step >= args.max_steps:
-                logging.info("Max steps reached, exiting")
-                sys.exit(0)
+    #             # Save checkpoint
+    #             if val_mae < best_val_mae:
+    #                 best_val_mae = val_mae
+    #                 torch.save(
+    #                     {
+    #                         "model": net.state_dict(),
+    #                         "optimizer": optimizer.state_dict(),
+    #                         "scheduler": scheduler.state_dict(),
+    #                         "step": step,
+    #                         "best_val_mae": best_val_mae,
+    #                     },
+    #                     os.path.join(args.output_dir, "best_model.pth"),
+    #                 )
+    #         step += 1
+
+    #         scheduler.step()
+
+    #         if step >= args.max_steps:
+    #             logging.info("Max steps reached, exiting")
+    #             sys.exit(0)
 
 
 if __name__ == "__main__":

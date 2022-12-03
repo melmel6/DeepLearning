@@ -6,18 +6,18 @@ from torch import nn
 from graphnn import layer
 
 
-class PainnModel(nn.Module):
-    """PainnModel with forces."""
+class SchnetModelForces(nn.Module):
+    """SchNet model with optional edge updates."""
 
     def __init__(
         self,
         num_interactions,
         hidden_state_size,
         cutoff,
+        update_edges=False,
         target_mean=[0.0],
         target_stddev=[1.0],
         normalize_atomwise=True,
-        direct_force_output=False,
         **kwargs,
     ):
         """
@@ -25,19 +25,19 @@ class PainnModel(nn.Module):
             num_interactions (int): Number of interaction layers
             hidden_state_size (int): Size of hidden node states
             cutoff (float): Atomic interaction cutoff distance [Å]
+            update_edges (bool): Enable edge updates
             target_mean ([float]): Target normalisation constant
             target_stddev ([float]): Target normalisation constant
             normalize_atomwise (bool): Use atomwise normalisation
-            direct_force_output (bool): Compute forces directly instead of using gradient
         """
         super().__init__(**kwargs)
         self.num_interactions = num_interactions
         self.hidden_state_size = hidden_state_size
         self.cutoff = cutoff
-        self.distance_embedding_size = 20
+        self.gaussian_expansion_step = 0.1
 
         num_embeddings = 119  # atomic numbers + 1
-        edge_size = self.distance_embedding_size
+        edge_size = int(math.ceil(self.cutoff / self.gaussian_expansion_step))
 
         # Setup atom embeddings
         self.atom_embeddings = nn.Embedding(num_embeddings, hidden_state_size)
@@ -45,19 +45,26 @@ class PainnModel(nn.Module):
         # Setup interaction networks
         self.interactions = nn.ModuleList(
             [
-                layer.PaiNNInteraction(hidden_state_size, edge_size, self.cutoff)
+                layer.Interaction(hidden_state_size, edge_size)
                 for _ in range(num_interactions)
             ]
         )
-        self.scalar_vector_update = nn.ModuleList(
-            [layer.PaiNNUpdate(hidden_state_size) for _ in range(num_interactions)]
-        )
+
+        if update_edges:
+            self.edge_updates = nn.ModuleList(
+                [
+                    layer.EdgeUpdate(edge_size, hidden_state_size)
+                    for _ in range(num_interactions)
+                ]
+            )
+        else:
+            self.edge_updates = [lambda e_state, e, n: e_state] * num_interactions
 
         # Setup readout function
         self.readout_mlp = nn.Sequential(
             nn.Linear(hidden_state_size, hidden_state_size),
-            nn.SiLU(),
-            nn.Linear(hidden_state_size, 1)
+            layer.ShiftedSoftplus(),
+            nn.Linear(hidden_state_size, 1),
         )
 
         # Normalisation constants
@@ -71,11 +78,6 @@ class PainnModel(nn.Module):
             torch.as_tensor(target_mean), requires_grad=False
         )
 
-        # Direct force output
-        self.direct_force_output = direct_force_output
-        if self.direct_force_output:
-            self.force_readout_linear = nn.Linear(hidden_state_size, 1, bias=False)
-
     def forward(self, input_dict, compute_forces=True, compute_stress=True):
         """
         Args:
@@ -87,7 +89,7 @@ class PainnModel(nn.Module):
                                 energy, forces, stress
                                 Forces and stress are only included if requested (default).
         """
-        if compute_forces and not self.direct_force_output:
+        if compute_forces:
             input_dict["nodes_xyz"].requires_grad_()
         if compute_stress:
             # Create displacement matrix of zeros and transform cell and atom positions
@@ -120,48 +122,33 @@ class PainnModel(nn.Module):
         nodes_xyz = layer.unpad_and_cat(
             input_dict["nodes_xyz"], input_dict["num_nodes"]
         )
-        nodes_scalar = layer.unpad_and_cat(input_dict["nodes"], input_dict["num_nodes"])
-        nodes_scalar = self.atom_embeddings(nodes_scalar)
-        nodes_vector = torch.zeros(
-            (nodes_scalar.shape[0], 3, self.hidden_state_size),
-            dtype=nodes_scalar.dtype,
-            device=nodes_scalar.device,
-        )
+        nodes = layer.unpad_and_cat(input_dict["nodes"], input_dict["num_nodes"])
+        nodes = self.atom_embeddings(nodes)
 
         # Compute edge distances
-        edges_distance, edges_diff = layer.calc_distance(
+        edges_features = layer.calc_distance(
             nodes_xyz,
             input_dict["cell"],
             edges,
             edges_displacement,
             input_dict["num_edges"],
-            return_diff=True,
         )
 
         # Expand edge features in Gaussian basis
-        edge_state = layer.sinc_expansion(
-            edges_distance, [(self.distance_embedding_size, self.cutoff)]
+        edge_state = layer.gaussian_expansion(
+            edges_features, [(0.0, self.gaussian_expansion_step, self.cutoff)]
         )
 
         # Apply interaction layers
-        for int_layer, update_layer in zip(
-            self.interactions, self.scalar_vector_update
-        ):
-            nodes_scalar, nodes_vector = int_layer(
-                nodes_scalar,
-                nodes_vector,
-                edge_state,
-                edges_diff,
-                edges_distance,
-                edges,
-            )
-            nodes_scalar, nodes_vector = update_layer(nodes_scalar, nodes_vector)
+        for edge_layer, int_layer in zip(self.edge_updates, self.interactions):
+            edge_state = edge_layer(edge_state, edges, nodes)
+            nodes = int_layer(nodes, edges, edge_state)
 
         # Apply readout function
-        nodes_scalar = self.readout_mlp(nodes_scalar)
+        nodes = self.readout_mlp(nodes)
 
         # Obtain graph level output
-        graph_output = layer.sum_splits(nodes_scalar, input_dict["num_nodes"])
+        graph_output = layer.sum_splits(nodes, input_dict["num_nodes"])
 
         # Apply (de-)normalization
         normalizer = self.normalize_stddev.unsqueeze(0)
@@ -175,28 +162,15 @@ class PainnModel(nn.Module):
 
         # Compute forces
         if compute_forces:
-            if self.direct_force_output:
-                forces = self.force_readout_linear(nodes_vector)
-                forces = torch.squeeze(forces, 2)
-
-                forces_reshaped = layer.pad_and_stack(
-                    torch.split(
-                        forces,
-                        list(input_dict["num_nodes"].detach().cpu().numpy()),
-                        dim=0,
-                    )
-                )
-                result_dict["forces"] = forces_reshaped
-            else:
-                dE_dxyz = torch.autograd.grad(
-                    graph_output,
-                    input_dict["nodes_xyz"],
-                    grad_outputs=torch.ones_like(graph_output),
-                    retain_graph=True,
-                    create_graph=True,
-                )[0]
-                forces = -dE_dxyz
-                result_dict["forces"] = forces
+            dE_dxyz = torch.autograd.grad(
+                graph_output,
+                input_dict["nodes_xyz"],
+                grad_outputs=torch.ones_like(graph_output),
+                retain_graph=True,
+                create_graph=True,
+            )[0]
+            forces = -dE_dxyz
+            result_dict["forces"] = forces
         # Compute stress
         if compute_stress:
             stress = torch.autograd.grad(
