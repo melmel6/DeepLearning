@@ -238,13 +238,15 @@ def main():
     net = get_model(args, target_mean=target_mean, target_stddev=target_stddev)
     net = net.to(device)
     
-    # Custom loss function to handle the custom regularizer coefficient
-    def EvidentialRegressionLoss(true, pred):
-        return edl.losses.EvidentialRegression(true, pred, coeff=1e-2)
+# =============================================================================
+#     # Custom loss function to handle the custom regularizer coefficient
+#     def EvidentialRegressionLoss(true, pred):
+#         return edl.losses.EvidentialRegression(true, pred, coeff=1e-2)
+# =============================================================================
     
     # Setup optimizer
     optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
-    criterion = EvidentialRegressionLoss()
+    criterion = torch.nn.MSELoss()
     scheduler_fn = lambda step: 0.96 ** (step / 100000)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
 

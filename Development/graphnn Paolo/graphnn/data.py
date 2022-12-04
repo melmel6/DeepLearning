@@ -270,8 +270,7 @@ class AseDbData(torch.utils.data.Dataset):
     def __getitem__(self, key):
         # Note that ASE databases are 1-indexed
         try:
-            if key <= 200:
-                return self.transformer(self.asedb_connection[key + 1])
+            return self.transformer(self.asedb_connection[key + 1])
         except KeyError:
             raise IndexError("index out of range")
 
