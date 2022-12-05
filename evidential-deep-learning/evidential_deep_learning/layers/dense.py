@@ -36,6 +36,7 @@ class DenseNormalGamma(Layer):
 
     def call(self, x):
         output = self.dense(x)
+        tf.print(output[:2])
         mu, logv, logalpha, logbeta = tf.split(output, 4, axis=-1)
         v = self.evidence(logv)
         alpha = self.evidence(logalpha) + 1

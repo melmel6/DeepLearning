@@ -42,10 +42,10 @@ class DenseNormalGamma_torch(Module):
     def evidence(self, x):
         return Softplus()(x) # Formula slightly different from the tensorflow one
     
-    def call (self, x):
+    def forward(self, x):
         output = self.dense(x)
-        print(output.shape)
-        mu, logv, logalpha, logbeta = split(output, 4, dim=-1)
+        print(output)
+        mu, logv, logalpha, logbeta = split(output, 1, dim=1)
         print(mu.shape)
         v = self.evidence(logv)
         alpha = self.evidence(logalpha) + 1
