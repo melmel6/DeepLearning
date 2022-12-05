@@ -2,10 +2,10 @@ import math
 
 import torch
 from torch import nn
-# import tensorflow as tf
+import tensorflow as tf
 
-from graphnn import layer
-# import evidential_deep_learning as edl
+from graphnn import layer, newev
+import evidential_deep_learning as edl
 
 
 
@@ -68,14 +68,9 @@ class SchnetModel(nn.Module):
             nn.Linear(hidden_state_size, hidden_state_size),
             layer.ShiftedSoftplus(),
             nn.Linear(hidden_state_size, 1),
+            newev.DenseNormalGamma_torch(1) # Evidential layer
         )
         
-# =============================================================================
-#         # Setup evidential layer
-#         self.ev_model = tf.keras.Sequential([
-#             edl.layers.DenseNormalGamma(1)
-#         ])
-# =============================================================================
 
         # Normalisation constants
         self.normalize_atomwise = torch.nn.Parameter(
@@ -130,7 +125,8 @@ class SchnetModel(nn.Module):
         nodes = self.readout_mlp(nodes)
         
 # =============================================================================
-#         nodes = nodes.numpy()
+#         # Apply evidential layer (convert to tensorflow and back)
+#         nodes = nodes.detach().numpy()
 #         nodes = tf.convert_to_tensor(nodes)
 #         
 #         nodes = edl.layers.DenseNormalGamma(1)(nodes)
