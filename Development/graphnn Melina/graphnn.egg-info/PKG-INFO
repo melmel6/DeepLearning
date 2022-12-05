@@ -1,7 +1,0 @@
-Metadata-Version: 2.1
-Name: graphnn
-Version: 0.0.1
-Summary: Library for implementation of message passing neural networks in Pytorch
-Home-page: https://gitlab.gbar.dtu.dk/sure/graphnn
-Author: SURE project team
-Author-email: pbjo@dtu.dk
