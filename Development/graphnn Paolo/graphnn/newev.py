@@ -44,15 +44,11 @@ class DenseNormalGamma_torch(Module):
     
     def forward(self, x):
         output = self.dense(x)
-        print(output)
         mu, logv, logalpha, logbeta = split(output, 1, dim=1)
-        print(mu.shape)
         v = self.evidence(logv)
         alpha = self.evidence(logalpha) + 1
         beta = self.evidence(logbeta)
-        paolino = cat((mu, v, alpha, beta), axis=-1)
-        print(paolino.shape)
-        return paolino
+        return cat((mu, v, alpha, beta), axis=-1)
     
     def compute_output_shape(self, input_shape):
         return (input_shape[0], 4 * self.units)

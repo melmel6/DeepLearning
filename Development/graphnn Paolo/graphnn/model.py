@@ -2,11 +2,8 @@ import math
 
 import torch
 from torch import nn
-import tensorflow as tf
 
 from graphnn import layer, newev
-import evidential_deep_learning as edl
-
 
 
 class SchnetModel(nn.Module):
@@ -49,7 +46,7 @@ class SchnetModel(nn.Module):
         self.interactions = nn.ModuleList(
             [
                 layer.Interaction(hidden_state_size, edge_size)
-                for _ in range(num_interactions)
+                for _ in range(num_interactions) # num_interaction = "Number of interaction layers used"
             ]
         )
 
@@ -68,8 +65,11 @@ class SchnetModel(nn.Module):
             nn.Linear(hidden_state_size, hidden_state_size),
             layer.ShiftedSoftplus(),
             nn.Linear(hidden_state_size, 1),
-            newev.DenseNormalGamma_torch(1) # Evidential layer
+            # newev.DenseNormalGamma_torch(1) # Evidential layer
         )
+        
+        # Setup evidential layer
+        self.evidential = newev.DenseNormalGamma_torch(1)
         
 
         # Normalisation constants
@@ -83,7 +83,7 @@ class SchnetModel(nn.Module):
             torch.as_tensor(target_mean), requires_grad=False
         )
 
-    def forward(self, input_dict):
+    def forward(self, input_dict):  
         """
         Args:
             input_dict (dict): Input dictionary of tensors with keys: nodes,
@@ -91,36 +91,64 @@ class SchnetModel(nn.Module):
                                targets
         """
         # Unpad and concatenate edges and features into batch (0th) dimension
+        #print('input_dict')
+        #print(input_dict)
         edges_features = layer.unpad_and_cat(
-            input_dict["edges_features"], input_dict["num_edges"]
+            input_dict["edges_features"], input_dict["num_edges"]   # Removes the filling zeros
         )
-        edge_offset = torch.cumsum(
+        #print('edges_features')
+        #print(edges_features.shape)
+        #print(edges_features)
+        edge_offset = torch.cumsum(     # Cumulative sum of the number of nodes
             torch.cat(
                 (
                     torch.tensor([0], device=input_dict["num_nodes"].device),
                     input_dict["num_nodes"][:-1],
                 )
             ),
-            dim=0,
+            dim=0, # [0, 10, 18, ...., 120, 129]
         )
-        edge_offset = edge_offset[:, None, None]
-        edges = input_dict["edges"] + edge_offset
+        #print('edge_offset')
+        #print(edge_offset.shape)
+        #print(edge_offset)
+        edge_offset = edge_offset[:, None, None] # [[[0]], [[10]], [[18]]...] match edges shape
+        #print(edge_offset.shape)
+        #print(edge_offset)
+        edges = input_dict["edges"] + edge_offset # Adding the cumsum, each node of the edges has a unique id in the whole dataset
+        #print('edges')
+        #print(edges.shape)
+        #print(edges)
         edges = layer.unpad_and_cat(edges, input_dict["num_edges"])
+        #print(edges.shape)
+        #print(edges)
 
         # Unpad and concatenate all nodes into batch (0th) dimension
         nodes = layer.unpad_and_cat(input_dict["nodes"], input_dict["num_nodes"])
-        nodes = self.atom_embeddings(nodes)
-
+        #print('nodes')
+        #print(nodes.shape)
+        #print(nodes)
+        nodes = self.atom_embeddings(nodes) #To each atomic number (i think) corresponds a list of values as long as hidden_state (default 64)
+        #print(nodes.shape)
+        #print(nodes)
+        
         # Expand edge features in Gaussian basis
-        edge_state = layer.gaussian_expansion(
+        edge_state = layer.gaussian_expansion(  # 1 value becomes a list of 50 values 
             edges_features, [(0.0, self.gaussian_expansion_step, self.cutoff)]
         )
+        #print('edge_state')
+        #print(edge_state.shape)
+        #print(edge_state)
 
         # Apply interaction layers
-        for edge_layer, int_layer in zip(self.edge_updates, self.interactions):
-            edge_state = edge_layer(edge_state, edges, nodes)
+        for edge_layer, int_layer in zip(self.edge_updates, self.interactions): # The self. here seem to be related to the model structure, we might need to change them
+            edge_state = edge_layer(edge_state, edges, nodes)   # Similar to sequential
             nodes = int_layer(nodes, edges, edge_state)
-
+        #print('edge_state after interaction')
+        #print(edge_state.shape)
+        #print(edge_state)
+        #print('nodes after interaction')
+        #print(nodes.shape)
+        #print(nodes)
         # Apply readout function
         nodes = self.readout_mlp(nodes)
         
@@ -134,16 +162,34 @@ class SchnetModel(nn.Module):
 #         nodes = nodes.numpy()
 #         nodes = torch.from_numpy(nodes)
 # =============================================================================
-
+        #print('nodes after readout_mlp')
+        #print(nodes.shape)
+        #print(nodes)
+        #PROBABLY ALL THAT FOLLOWS SHOLD BE APPLIED BEFORE THE EVIDENTIAL LAYER
         # Obtain graph level output
-        graph_output = layer.sum_splits(nodes, input_dict["num_nodes"])
-
+        graph_output = layer.sum_splits(nodes, input_dict["num_nodes"]) # Sum nodes values for each molecule
+        #print('graph_ouptut')
+        #print(graph_output.shape)
+        #print(graph_output)
         # Apply (de-)normalization
-        normalizer = self.normalize_stddev.unsqueeze(0)
+        normalizer = self.normalize_stddev.unsqueeze(0) # normalize_stddev is the specified stdev in the shape of a tensor. Unsqueeze puts it in a row
         graph_output = graph_output * normalizer
+        #print('graph_output after stddev')
+        #print(graph_output.shape)
+        #print(graph_output)
         mean_shift = self.normalize_mean.unsqueeze(0)
         if self.normalize_atomwise:
             mean_shift = mean_shift * input_dict["num_nodes"].unsqueeze(1)
         graph_output = graph_output + mean_shift
+        
+        print('graph_output after mean_shift')
+        print(graph_output.shape)
+        print(graph_output)
+        
+        # Apply evidential layer
+        graph_output = self.evidential(graph_output)
+        #print('graph_output after evidential')
+        #print(graph_output.shape)
+        #print(graph_output)
 
         return graph_output

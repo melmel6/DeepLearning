@@ -10,9 +10,7 @@ import numpy as np
 import torch
 
 from context import graphnn
-from graphnn import data
-from graphnn import model
-
+from graphnn import data, model, continuous_loss
 
 def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(
@@ -43,7 +41,7 @@ def get_arguments(arg_list=None):
         help="Number of interaction layers used",
     )
     parser.add_argument(
-        "--node_size", type=int, default=64, help="Size of hidden node states"
+        "--node_size", type=int, default=64, help="Size of hidden node states"  # Hidden_state_size
     )
     parser.add_argument(
         "--output_dir",
@@ -118,15 +116,28 @@ def eval_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs = model(device_batch).detach().cpu().numpy()
+            outputs = torch.index_select(input=model(device_batch).detach().cpu(), dim=1, index=torch.tensor([0]))
+            outputs = outputs.numpy()
         targets = batch["targets"].detach().cpu().numpy()
-
+        #print('outputs')
+        #print(outputs)
+        #print('targets')
+        #print(targets)
         running_ae += np.sum(np.abs(targets - outputs), axis=0)
         running_se += np.sum(np.square(targets - outputs), axis=0)
         running_count += targets.shape[0]
-
+        #print('running_ae')
+        #print(running_ae)
+        #print('running_se')
+        #print(running_se)
+        #print('running_count')
+        #print(running_count)
     mae = running_ae / running_count
+    #print('mae')
+    #print(mae)
     rmse = np.sqrt(running_se / running_count)
+    #print('rmse')
+    #print(rmse)
 
     return mae, rmse
 
@@ -176,6 +187,10 @@ def get_model(args, **kwargs):
     )
     return net
 
+# Custom loss function to handle the custom regularizer coefficient
+def EvidentialRegressionLoss(true, pred):
+    return continuous_loss.EvidentialRegression(true, pred, coeff=1e-2)
+
 
 def main():
     args = get_arguments()
@@ -187,7 +202,7 @@ def main():
         format="%(asctime)s [%(levelname)-5.5s]  %(message)s",
         handlers=[
             logging.FileHandler(
-                os.path.join(args.output_dir, "printlog.txt"), mode="w"
+                os.path.join(args.output_dir, "#printlog.txt"), mode="w"
             ),
             logging.StreamHandler(),
         ],
@@ -238,13 +253,9 @@ def main():
     net = get_model(args, target_mean=target_mean, target_stddev=target_stddev)
     net = net.to(device)
     
-    # Custom loss function to handle the custom regularizer coefficient
-    def EvidentialRegressionLoss(true, pred):
-        return edl.losses.EvidentialRegression(true, pred, coeff=1e-2)
-    
     # Setup optimizer
     optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
-    criterion = torch.nn.MSELoss()
+    # criterion = torch.nn.MSELoss()
     scheduler_fn = lambda step: 0.96 ** (step / 100000)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
 
@@ -276,15 +287,21 @@ def main():
 
             # Forward, backward and optimize
             outputs = net(batch)
-            loss = criterion(outputs, batch["targets"])
-            loss.backward()
+            #print('outputs')
+            #print(outputs.shape)
+            #print(outputs)
+            loss = EvidentialRegressionLoss(batch["targets"], outputs)
+            #print('loss')
+            #print(loss.shape)
+            #print(loss)
+            loss.backward(gradient=torch.ones_like(loss))   # Added gradient because loss is tensor, not scalar
             optimizer.step()
 
             loss_value = loss.item()
             running_loss += loss_value * batch["targets"].shape[0]
             running_loss_count += batch["targets"].shape[0]
 
-            # print(step, loss_value)
+            # #print(step, loss_value)
             # Validate and save model
             if (step % log_interval == 0) or ((step + 1) == args.max_steps):
                 train_loss = running_loss / running_loss_count
