@@ -116,7 +116,7 @@ def eval_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs = torch.index_select(input=model(device_batch).detach().cpu(), dim=1, index=torch.tensor([0]))
+            outputs = torch.index_select(input=model(device_batch)[0].detach().cpu(), dim=1, index=torch.tensor([0]))
             outputs = outputs.numpy()
         targets = batch["targets"].detach().cpu().numpy()
         #print('outputs')
@@ -286,7 +286,7 @@ def main():
             optimizer.zero_grad()
 
             # Forward, backward and optimize
-            outputs = net(batch)
+            outputs, aleatoric_uncertainty, epistemic_uncertainty = net(batch)
             #print('outputs')
             #print(outputs.shape)
             #print(outputs)
@@ -310,11 +310,11 @@ def main():
                 val_mae, val_rmse = eval_model(net, val_loader, device)
 
                 logging.info(
-                    "step=%d, val_mae=%g, val_rmse=%g, sqrt(train_loss)=%g",
+                    "step=%d, val_mae=%g, val_rmse=%g, train_loss=%g",
                     step,
                     val_mae,
                     val_rmse,
-                    math.sqrt(train_loss),
+                    train_loss,
                 )
 
                 # Save checkpoint

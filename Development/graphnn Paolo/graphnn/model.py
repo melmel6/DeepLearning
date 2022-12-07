@@ -191,5 +191,11 @@ class SchnetModel(nn.Module):
         #print('graph_output after evidential')
         #print(graph_output.shape)
         #print(graph_output)
+        
+        # Obtain uncertainty
+        gamma, v, alpha, beta  = torch.split(graph_output, 1, dim=-1)
+    
+        aleatoric_uncertainty = beta/(alpha - 1)
+        epistemic_uncertainty = beta/(v * (alpha - 1))
 
-        return graph_output
+        return graph_output, aleatoric_uncertainty, epistemic_uncertainty
