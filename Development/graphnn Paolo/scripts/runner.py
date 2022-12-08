@@ -12,6 +12,15 @@ import torch
 from context import graphnn
 from graphnn import data, model, continuous_loss
 
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+
+
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
+
 def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(
         description="Train graph convolution network", fromfile_prefix_chars="+"
@@ -191,7 +200,17 @@ def get_model(args, **kwargs):
 def EvidentialRegressionLoss(true, pred):
     return continuous_loss.EvidentialRegression(true, pred, coeff=1e-2)
 
-
+# =============================================================================
+# def plot_epistemic(dictionary, aleatoric, epistemic, x='num_nodes', y='H', cmap='cool'):
+#     X = dictionary[x]
+#     Y = dictionary[y]
+#     print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+#     print(aleatoric, epistemic)
+#     return plt.scatter(X, Y, s=200, c=epistemic, cmap=cmap)
+# 
+# =============================================================================
+    
+    
 def main():
     args = get_arguments()
 
@@ -287,6 +306,8 @@ def main():
 
             # Forward, backward and optimize
             outputs, aleatoric_uncertainty, epistemic_uncertainty = net(batch)
+            print('epistemic_uncertainty')
+            print(epistemic_uncertainty)
             #print('outputs')
             #print(outputs.shape)
             #print(outputs)
@@ -300,8 +321,9 @@ def main():
             loss_value = loss.item()
             running_loss += loss_value * batch["targets"].shape[0]
             running_loss_count += batch["targets"].shape[0]
+            
 
-            # #print(step, loss_value)
+
             # Validate and save model
             if (step % log_interval == 0) or ((step + 1) == args.max_steps):
                 train_loss = running_loss / running_loss_count
@@ -337,7 +359,39 @@ def main():
             if step >= args.max_steps:
                 logging.info("Max steps reached, exiting")
                 sys.exit(0)
-
+        
+# =============================================================================
+# =============================================================================
+# #         # Plot uncertainty
+# #         print('_________UUUUUUNNNNNNNCCCCERRRTAINTYYYYYYYYYYYYYYYYYYYYY______________')
+# #         X = 'num_nodes'
+# #         Y = 'num_edges'
+# #         
+# #         # Setup the normalization and the colormap
+# #         normalize = mcolors.Normalize(vmin=epistemic_uncertainty.detach().min(), vmax=epistemic_uncertainty.detach().max())
+# #         colormap = cm.cool
+# #         
+# #         # Plot
+# #         plt.scatter(batch[X], batch[Y], s=150, c=epistemic_uncertainty.detach(), cmap='cool', alpha=0.4) 
+# # 
+# #         # Setup the colorbar
+# #         scalarmappaple = cm.ScalarMappable(norm=normalize, cmap=colormap)
+# #         scalarmappaple.set_array(epistemic_uncertainty.detach())
+# #         plt.colorbar(scalarmappaple)
+# #         
+# #         # Title and labels
+# #         plt.title('Epistemic uncertainty')
+# #         plt.xlabel(X)
+# #         plt.ylabel(Y)
+# #         
+# #         # Save plot
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.svg', bbox_inches='tight')    
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.pdf', bbox_inches='tight')  
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.png', bbox_inches='tight', dpi=96)  
+# #         plt.close()
+# =============================================================================
+# =============================================================================
+    
 
 if __name__ == "__main__":
     main()

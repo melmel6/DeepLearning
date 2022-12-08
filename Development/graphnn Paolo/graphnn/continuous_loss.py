@@ -58,10 +58,12 @@ def EvidentialRegression(y_true, evidential_output, coeff=1.0):
 
     loss = loss_nll + coeff * loss_reg
 
-    print("************** LOSS ****************")
-    print(loss)
-    print(loss.shape)
-    print("************** END LOSS ****************")
+# =============================================================================
+#     print("************** LOSS ****************")
+#     print(loss)
+#     print(loss.shape)
+#     print("************** END LOSS ****************")
+# =============================================================================
 
     return torch.mean(loss)
 

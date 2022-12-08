@@ -113,14 +113,11 @@ def main():
         predictions = predict_with_model(net, loader, device)
         output_path = os.path.join(args.output_dir, "predictions_%s.txt" % splitname)
         np.savetxt(output_path, predictions)
+        with open(output_path, 'w') as fp:
+            json.dump(predictions, fp)
         output_path = os.path.join(args.output_dir, "data_%s.txt" % splitname)
-        np.savetxt(output_path, loader)
-# =============================================================================
-#         with open(output_path, 'w') as fp:
-#             json.dump(predictions, fp)
-#         with open(output_path, 'w') as fp:
-#             json.dump(loader, fp)
-# =============================================================================
+        with open(output_path, 'w') as fp:
+            json.dump(loader, fp)
 
 
 if __name__ == "__main__":
