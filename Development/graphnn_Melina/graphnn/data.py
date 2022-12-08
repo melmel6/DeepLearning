@@ -69,7 +69,10 @@ class TransformRowToGraph:
             self.targets = targets
 
     def __call__(self, row):
+        # print(row.get("G_"))
+
         atoms = row.toatoms()
+        enthalpy = row.key_value_pairs["H_"]
 
         if np.any(atoms.get_pbc()):
             edges, edges_features = self.get_edges_neighborlist(atoms)
@@ -98,6 +101,7 @@ class TransformRowToGraph:
             "edges_features": torch.tensor(edges_features, dtype=default_type),
             "num_edges": torch.tensor(edges.shape[0]),
             "targets": torch.tensor(targets, dtype=default_type),
+            "H_": torch.tensor(enthalpy)
         }
 
         return graph_data
@@ -378,7 +382,7 @@ def pad_and_stack(tensors: List[torch.Tensor]):
     return torch.stack(tensors)
 
 
-def collate_atomsdata(graphs: List[dict], pin_memory=True):
+def collate_atomsdata(graphs: List[dict], pin_memory=False):
     # Convert from "list of dicts" to "dict of lists"
     dict_of_lists = {k: [dic[k] for dic in graphs] for k in graphs[0]}
     # Convert each list of tensors to single tensor with pad and stack

@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 def NIG_NLL(y, gamma, v, alpha, beta, reduce=False):
+    # print("hello 2")
 
     twoBlambda = 2*beta*(1+v)
 
@@ -16,6 +17,7 @@ def NIG_NLL(y, gamma, v, alpha, beta, reduce=False):
     return torch.mean(nll) if reduce else nll
 
 def KL_NIG(mu1, v1, a1, b1, mu2, v2, a2, b2):
+    # print("nig")
 
     KL = 0.5*(a1-1)/b1 * (v2*torch.square(mu2-mu1))  \
         + 0.5*v2/v1  \

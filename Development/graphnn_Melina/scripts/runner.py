@@ -6,17 +6,17 @@ import math
 import os
 import sys
 
-
 import numpy as np
 import torch
 
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
 from context import graphnn
-from graphnn import data
-from graphnn import model
-from graphnn import continuous_loss
-
-
-
+from graphnn import data, model, continuous_loss, continuous_loss_pytorch
 
 def get_arguments(arg_list=None):
     parser = argparse.ArgumentParser(
@@ -47,7 +47,7 @@ def get_arguments(arg_list=None):
         help="Number of interaction layers used",
     )
     parser.add_argument(
-        "--node_size", type=int, default=64, help="Size of hidden node states"
+        "--node_size", type=int, default=64, help="Size of hidden node states"  # Hidden_state_size
     )
     parser.add_argument(
         "--output_dir",
@@ -122,15 +122,28 @@ def eval_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs = model(device_batch).detach().cpu().numpy()
+            outputs = torch.index_select(input=model(device_batch).detach().cpu(), dim=1, index=torch.tensor([0]))
+            outputs = outputs.numpy()
         targets = batch["targets"].detach().cpu().numpy()
-
+        #print('outputs')
+        #print(outputs)
+        #print('targets')
+        #print(targets)
         running_ae += np.sum(np.abs(targets - outputs), axis=0)
         running_se += np.sum(np.square(targets - outputs), axis=0)
         running_count += targets.shape[0]
-
+        #print('running_ae')
+        #print(running_ae)
+        #print('running_se')
+        #print(running_se)
+        #print('running_count')
+        #print(running_count)
     mae = running_ae / running_count
+    #print('mae')
+    #print(mae)
     rmse = np.sqrt(running_se / running_count)
+    #print('rmse')
+    #print(rmse)
 
     return mae, rmse
 
@@ -180,6 +193,21 @@ def get_model(args, **kwargs):
     )
     return net
 
+# Custom loss function to handle the custom regularizer coefficient
+def EvidentialRegressionLoss(true, pred):
+    return continuous_loss_pytorch.EvidentialRegression(true, pred, lmbda=1e-2)
+    # return continuous_loss.EvidentialRegression(true, pred, coeff=1e-2)
+
+# =============================================================================
+# def plot_epistemic(dictionary, aleatoric, epistemic, x='num_nodes', y='H', cmap='cool'):
+#     X = dictionary[x]
+#     Y = dictionary[y]
+#     print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+#     print(aleatoric, epistemic)
+#     return plt.scatter(X, Y, s=200, c=epistemic, cmap=cmap)
+#
+# =============================================================================
+    
 
 def main():
     args = get_arguments()
@@ -191,7 +219,7 @@ def main():
         format="%(asctime)s [%(levelname)-5.5s]  %(message)s",
         handlers=[
             logging.FileHandler(
-                os.path.join(args.output_dir, "printlog.txt"), mode="w"
+                os.path.join(args.output_dir, "#printlog.txt"), mode="w"
             ),
             logging.StreamHandler(),
         ],
@@ -215,8 +243,29 @@ def main():
     dataset = data.AseDbData(
         args.dataset, data.TransformRowToGraph(cutoff=args.cutoff, targets=args.target)
     )
+
     dataset = data.BufferData(dataset)  # Load data into host memory
 
+    # print(dataset.data_objects)
+
+    maxNode = max(dataset.data_objects, key=lambda x:x['num_nodes'])
+    minNode = min(dataset.data_objects, key=lambda x:x['num_nodes'])
+
+    print(maxNode['num_nodes'])
+    print(minNode['num_nodes'])
+
+    maxH = max(dataset.data_objects, key=lambda x:x['H_'])
+    minH = min(dataset.data_objects, key=lambda x:x['H_'])
+
+    print(maxH['H_'])
+    print(minH['H_'])
+
+    # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>15 and d['H_']<-72)]
+    # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>15 and d['H_']<-74)]
+    # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>11)]
+
+
+    # print(dataset.data_objects)
     # Split data into train and validation sets
     datasplits = split_data(dataset, args)
     logging.info("Computing mean and variance")
@@ -242,16 +291,9 @@ def main():
     net = get_model(args, target_mean=target_mean, target_stddev=target_stddev)
     net = net.to(device)
     
-# =============================================================================
-#     # Custom loss function to handle the custom regularizer coefficient
-    def EvidentialRegressionLoss(true, pred):
-        return continuous_loss.EvidentialRegression(true, pred, coeff=1e-2)
-# =============================================================================
-    
     # Setup optimizer
     optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
     # criterion = torch.nn.MSELoss()
-
     scheduler_fn = lambda step: 0.96 ** (step / 100000)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
 
@@ -282,17 +324,24 @@ def main():
             optimizer.zero_grad()
 
             # Forward, backward and optimize
-            outputs = net(batch)
-            print(outputs.shape)
-            loss = EvidentialRegressionLoss(outputs, batch["targets"])
-            loss.backward()
+            outputs, aleatoric_uncertainty, epistemic_uncertainty = net(batch)
+            #print('outputs')
+            #print(outputs.shape)
+            #print(outputs)
+            # print("*loss*")
+            loss = EvidentialRegressionLoss(batch["targets"], outputs)
+            # print("*end loss*")
+            #print('loss')
+            #print(loss.shape)
+            #print(loss)
+            loss.backward()   # Added gradient because loss is tensor, not scalar
             optimizer.step()
 
             loss_value = loss.item()
             running_loss += loss_value * batch["targets"].shape[0]
             running_loss_count += batch["targets"].shape[0]
 
-            # print(step, loss_value)
+            # #print(step, loss_value)
             # Validate and save model
             if (step % log_interval == 0) or ((step + 1) == args.max_steps):
                 train_loss = running_loss / running_loss_count
@@ -301,11 +350,11 @@ def main():
                 val_mae, val_rmse = eval_model(net, val_loader, device)
 
                 logging.info(
-                    "step=%d, val_mae=%g, val_rmse=%g, sqrt(train_loss)=%g",
+                    "step=%d, val_mae=%g, val_rmse=%g, train_loss=%g",
                     step,
                     val_mae,
                     val_rmse,
-                    math.sqrt(train_loss),
+                    train_loss,
                 )
 
                 # Save checkpoint
@@ -329,6 +378,38 @@ def main():
                 logging.info("Max steps reached, exiting")
                 sys.exit(0)
 
+        # =============================================================================
+# =============================================================================
+# #         # Plot uncertainty
+# #         print('_________UUUUUUNNNNNNNCCCCERRRTAINTYYYYYYYYYYYYYYYYYYYYY______________')
+# #         X = 'num_nodes'
+# #         Y = 'num_edges'
+# #        
+# #         # Setup the normalization and the colormap
+# #         normalize = mcolors.Normalize(vmin=epistemic_uncertainty.detach().min(), vmax=epistemic_uncertainty.detach().max())
+# #         colormap = cm.cool
+# #        
+# #         # Plot
+# #         plt.scatter(batch[X], batch[Y], s=150, c=epistemic_uncertainty.detach(), cmap='cool', alpha=0.4)
+# #
+# #         # Setup the colorbar
+# #         scalarmappaple = cm.ScalarMappable(norm=normalize, cmap=colormap)
+# #         scalarmappaple.set_array(epistemic_uncertainty.detach())
+# #         plt.colorbar(scalarmappaple)
+# #        
+# #         # Title and labels
+# #         plt.title('Epistemic uncertainty')
+# #         plt.xlabel(X)
+# #         plt.ylabel(Y)
+# #        
+# #         # Save plot
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.svg', bbox_inches='tight')    
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.pdf', bbox_inches='tight')  
+# #         plt.savefig('uncertainty Plots\Epistemic_' + str(epoch) + '.png', bbox_inches='tight', dpi=96)  
+# #         plt.close()
+# =============================================================================
+# =============================================================================
+    
 
 if __name__ == "__main__":
     main()
