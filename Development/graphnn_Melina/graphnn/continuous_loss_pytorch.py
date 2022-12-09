@@ -56,5 +56,6 @@ def EvidentialRegression(y: torch.Tensor, evidential_output: torch.Tensor, lmbda
     loss_reg = NIG_Reg(y, gamma, nu, alpha)
 
     retval = loss_nll + lmbda * loss_reg
-    # print(retval)
+    print("** LOSS **")
+    print(retval)
     return retval

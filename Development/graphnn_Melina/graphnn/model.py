@@ -65,13 +65,13 @@ class SchnetModel(nn.Module):
         self.readout_mlp = nn.Sequential(
             nn.Linear(hidden_state_size, hidden_state_size),
             layer.ShiftedSoftplus(),
-            nn.Linear(hidden_state_size, 1),
+            # dense_pytorch.DenseNormalGamma(hidden_state_size)
+            # nn.Linear(hidden_state_size, 1),
             # newev.DenseNormalGamma_torch(1) # Evidential layer
         )
         
         # Setup evidential layer
-        # self.evidential = newev.DenseNormalGamma_torch(1)
-        self.evidential = dense_pytorch.DenseNormalGamma(1)
+        self.evidential = dense_pytorch.DenseNormalGamma(hidden_state_size)
 
         # Normalisation constants
         self.normalize_atomwise = torch.nn.Parameter(
@@ -196,11 +196,18 @@ class SchnetModel(nn.Module):
         # print('graph_output after evidential')
         # print(graph_output.shape)
 
-        print(graph_output[0][0])
+        print("******* WEIGHTS *******")
+        print(self.readout_mlp[0].weight)
 
+        skata = 1
         if(torch.isnan(graph_output[0][0])):
+            # print(input_dict)
             print("nan found")
+
             sys.exit()
+        elif(skata == 1):
+            # print(input_dict)
+            skata = skata +1
 
         print(graph_output)
 
@@ -221,4 +228,6 @@ class SchnetModel(nn.Module):
         aleatoric_uncertainty = beta/(alpha - 1)
         epistemic_uncertainty = beta/(v * (alpha - 1))
         
+        # print("********* epistemic")
+        # print(epistemic_uncertainty)
         return graph_output, aleatoric_uncertainty, epistemic_uncertainty

@@ -82,7 +82,7 @@ def get_arguments(arg_list=None):
         "--target", type=str, default="energy", help="Name of target property",
     )
     parser.add_argument(
-        "--learning_rate", type=float, default=0.0001, help="Learning rate",
+        "--learning_rate", type=float, default=0.000001, help="Learning rate",
     )
 
     return parser.parse_args(arg_list)
@@ -122,7 +122,7 @@ def eval_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs = torch.index_select(input=model(device_batch).detach().cpu(), dim=1, index=torch.tensor([0]))
+            outputs = torch.index_select(input=model(device_batch)[0].detach().cpu(), dim=1, index=torch.tensor([0]))
             outputs = outputs.numpy()
         targets = batch["targets"].detach().cpu().numpy()
         #print('outputs')
@@ -195,7 +195,7 @@ def get_model(args, **kwargs):
 
 # Custom loss function to handle the custom regularizer coefficient
 def EvidentialRegressionLoss(true, pred):
-    return continuous_loss_pytorch.EvidentialRegression(true, pred, lmbda=1e-2)
+    return continuous_loss_pytorch.EvidentialRegression(true, pred, lmbda=1e-4)
     # return continuous_loss.EvidentialRegression(true, pred, coeff=1e-2)
 
 # =============================================================================
@@ -254,13 +254,15 @@ def main():
     print(maxNode['num_nodes'])
     print(minNode['num_nodes'])
 
-    maxH = max(dataset.data_objects, key=lambda x:x['H_'])
-    minH = min(dataset.data_objects, key=lambda x:x['H_'])
+    # maxH = max(dataset.data_objects, key=lambda x:x['H_'])
+    # minH = min(dataset.data_objects, key=lambda x:x['H_'])
 
-    print(maxH['H_'])
-    print(minH['H_'])
+    # print(maxH['H_'])
+    # print(minH['H_'])
 
     # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>15 and d['H_']<-72)]
+
+    # Subsetting:
     # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>15 and d['H_']<-74)]
     # dataset.data_objects = [d for d in dataset.data_objects if (d['num_nodes']>11)]
 
@@ -279,12 +281,12 @@ def main():
         datasplits["train"],
         100,
         sampler=torch.utils.data.RandomSampler(datasplits["train"]),
-        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
+        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda")
     )
     val_loader = torch.utils.data.DataLoader(
         datasplits["validation"],
         32,
-        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda"),
+        collate_fn=data.CollateAtomsdata(pin_memory=device.type == "cuda")
     )
 
     # Initialise model
@@ -292,7 +294,7 @@ def main():
     net = net.to(device)
     
     # Setup optimizer
-    optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.Adam(net.parameters(), lr=args.learning_rate, weight_decay=1e-6)
     # criterion = torch.nn.MSELoss()
     scheduler_fn = lambda step: 0.96 ** (step / 100000)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, scheduler_fn)
