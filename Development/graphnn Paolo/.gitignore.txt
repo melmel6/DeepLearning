@@ -1,2 +1,0 @@
-./Data/setup.db
-./Data/qm9.db
