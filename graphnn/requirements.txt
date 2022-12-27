@@ -1,6 +1,0 @@
-numpy
-asap3
-ase
-pandas
-requests
-torch

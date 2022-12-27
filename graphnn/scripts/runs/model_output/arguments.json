@@ -1,1 +1,0 @@
-{"load_model": null, "cutoff": 5.0, "split_file": null, "num_interactions": 3, "node_size": 64, "output_dir": "runs/model_output", "dataset": "data/qm9.db", "max_steps": 1000000, "device": "cuda", "update_edges": false, "atomwise_normalization": false, "target": "energy", "learning_rate": 0.0001}
