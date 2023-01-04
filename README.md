@@ -7,12 +7,15 @@
 
 ## Setup
 
-Create and activate a Python virtual environment and then install the requirements specified in `requirements.txt`.
+Create and activate a Python virtual environment and then install the requirements specified in `requirements.txt`:
+
+    $ pip3 install -r requirements.txt
+    
 Note that the `asap3` package needs to be installed with `pip`. The other dependencies are available with `conda`.
 
 The core functionality can (optionally) be installed as a Python package for use in other projects:
 
-    $ python setup.py install
+    $ python3 setup.py install
 
 Note: Installing the Python package is not required for running the scripts in `/scripts`
 
