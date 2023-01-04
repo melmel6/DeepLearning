@@ -1,0 +1,12 @@
+--dataset
+../qm9.db
+--max_steps
+700000
+--output_dir
+runs/final_5_3
+--device
+cuda
+--target
+G_
+--learning_rate
+0.000001
