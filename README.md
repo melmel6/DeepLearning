@@ -46,3 +46,4 @@ Run:
 
     $ python3 scripts/predict_with_model.py --model_dir runs/final --output_dir runs/final_predictions --split_file runs/final/datasplits.json --device cpu
 
+To check results from our predictions in **HPC**, check file runs/HPC_predictions/predictions_key.txt
