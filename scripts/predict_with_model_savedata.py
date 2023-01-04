@@ -47,7 +47,7 @@ def predict_with_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs.append(model(device_batch).detach().cpu().numpy())
+            outputs.append(model(device_batch)[0].detach().cpu().numpy())
 
     return np.concatenate(outputs, axis=0)
 

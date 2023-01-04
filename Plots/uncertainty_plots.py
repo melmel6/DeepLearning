@@ -81,8 +81,6 @@ plt.xlabel('Number of atoms')
 plt.ylabel('Enthalpy')
 
 # Save plot
-plt.savefig('Epistemic.svg', bbox_inches='tight')    
-plt.savefig('Epistemic.pdf', bbox_inches='tight')  
 plt.savefig('Epistemic.png', dpi=300, bbox_inches='tight')  
 
 plt.close()  
@@ -108,8 +106,6 @@ plt.xlabel('Number of atoms')
 plt.ylabel('Enthalpy')
 
 # Save plot
-plt.savefig('Aleatoric.svg', bbox_inches='tight')    
-plt.savefig('Aleatoric.pdf', bbox_inches='tight')  
 plt.savefig('Aleatoric.png', dpi=300, bbox_inches='tight')  
 
 plt.close()  

@@ -199,16 +199,7 @@ class SchnetModel(nn.Module):
         print("******* WEIGHTS *******")
         print(self.readout_mlp[0].weight)
 
-        skata = 1
-        if(torch.isnan(graph_output[0][0])):
-            # print(input_dict)
-            print("nan found")
-
-            sys.exit()
-        elif(skata == 1):
-            # print(input_dict)
-            skata = skata +1
-
+        print("****** GRAPH OUTPUT ******")
         print(graph_output)
 
         # Obtain uncertainty

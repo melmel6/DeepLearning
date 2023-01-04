@@ -47,7 +47,7 @@ def predict_with_model(model, dataloader, device):
             k: v.to(device=device, non_blocking=True) for k, v in batch.items()
         }
         with torch.no_grad():
-            outputs.append(model(device_batch).detach().cpu().numpy())
+            outputs.append(model(device_batch)[0].detach().cpu().numpy())
 
     return np.concatenate(outputs, axis=0)
 
@@ -81,7 +81,7 @@ def main():
 
     # Load model parameters
     model_path = os.path.join(args.model_dir, "best_model.pth")
-    state_dict = torch.load(model_path)
+    state_dict = torch.load(model_path, map_location=torch.device('cpu'))
     net.load_state_dict(state_dict["model"])
 
     # Setup dataset
@@ -114,8 +114,8 @@ def main():
         output_path = os.path.join(args.output_dir, "predictions_%s.txt" % splitname)
         np.savetxt(output_path, predictions)
         #Paolo new below
-        output_path = os.path.join(args.output_dir, "data_%s.txt" % splitname)
-        np.savetxt(output_path, loader)
+        # output_path = os.path.join(args.output_dir, "data_%s.txt" % splitname)
+        # np.savetxt(output_path, loader)
 # =============================================================================
 #         with open(output_path, 'w') as fp:
 #             json.dump(predictions, fp)
